@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { getAccessToken, getRefreshToken, saveTokens } from './security';
 
-export const API_URL = 'http://192.168.200.109:3000'; // Adresse IP locale Wi-Fi de la machine dev
+export const API_URL = 'https://babitrack-backend.onrender.com'; // Adresse IP locale Wi-Fi de la machine dev
 
 const api = axios.create({
   baseURL: API_URL,
