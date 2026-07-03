@@ -17,6 +17,11 @@
         "backgroundColor": "#000000",
         "foregroundImage": "./assets/icon.png"
       },
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyAGgwpaVkbzs7GZn3qHUm7Cw3Z60G_gPmo"
+        }
+      },
       "permissions": [
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION",
