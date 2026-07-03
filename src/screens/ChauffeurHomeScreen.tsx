@@ -76,9 +76,37 @@ export default function ChauffeurHomeScreen({ user, onLogout }: ChauffeurHomeScr
     fetchConfig();
   }, []);
 
+  // Avis de consentement explicite de géolocalisation (Exigence Prominent Disclosure de Google Play)
+  const showLocationDisclosure = (): Promise<boolean> => {
+    return new Promise((resolve) => {
+      Alert.alert(
+        "Suivi de la géolocalisation",
+        "BabiTrack collecte les données de localisation de votre appareil pour permettre aux usagers (parents d'élèves et collaborateurs d'entreprise) de suivre la position exacte du car sur la carte en temps réel.\n\nCette collecte s'effectue au premier plan et en arrière-plan (même lorsque l'application est fermée ou inutilisée) uniquement pendant la durée d'un trajet de transport actif.",
+        [
+          {
+            text: "Refuser",
+            onPress: () => resolve(false),
+            style: "destructive"
+          },
+          {
+            text: "Accepter et continuer",
+            onPress: () => resolve(true)
+          }
+        ],
+        { cancelable: false }
+      );
+    });
+  };
+
   // 2. Émission GPS en tâche de fond lors d'un trajet actif
   const startGpsTracking = async (socket: any) => {
     try {
+      const userConsented = await showLocationDisclosure();
+      if (!userConsented) {
+        Alert.alert('Action requise', 'Vous devez accepter l\'utilisation de la géolocalisation pour pouvoir démarrer le trajet.');
+        return false;
+      }
+
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
         Alert.alert('Permission refusée', 'La permission d\'accès à la géolocalisation est requise pour le suivi du car.');
