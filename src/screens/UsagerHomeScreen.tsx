@@ -302,7 +302,7 @@ export default function UsagerHomeScreen({ user, onLogout }: UsagerHomeScreenPro
           {busLocation && (
             <Marker
               coordinate={{ latitude: busLocation.latitude, longitude: busLocation.longitude }}
-              title="Mon Car de Ramassage"
+              title="Mon Car de D'embarquement"
               description={`Vitesse : ${Math.round(busLocation.speed)} km/h`}
               rotation={busLocation.bearing}
               anchor={{ x: 0.5, y: 0.5 }}
@@ -318,7 +318,7 @@ export default function UsagerHomeScreen({ user, onLogout }: UsagerHomeScreenPro
         <View style={styles.infoPanel}>
           <View style={styles.panelRow}>
             <View>
-              <Text style={styles.panelTitle}>Car de Ramassage</Text>
+              <Text style={styles.panelTitle}>Car de D'embarquement</Text>
               <Text style={styles.panelStatus}>
                 Statut :{' '}
                 <Text

@@ -518,7 +518,7 @@ export default function ChauffeurHomeScreen({ user, onLogout }: ChauffeurHomeScr
               handleReportIncident(
                 'PANNE',
                 'HIGH',
-                'Le car de ramassage est tombé en panne. Un car de remplacement a été déployé.'
+                'Votre car est tombé en panne. Un car de remplacement a été déployé.'
               )
             }
           >
