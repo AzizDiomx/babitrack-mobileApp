@@ -79,3 +79,14 @@ export const clearCredentials = async (): Promise<void> => {
   // Note : On ne supprime pas forcément le code PIN lors d'un simple logout, 
   // mais on peut le supprimer si nécessaire. Laissons-le pour permettre la reconnexion PIN.
 };
+
+const LOCATION_CONSENT_KEY = 'babitrack_location_consent';
+
+export const saveLocationConsent = async (consent: boolean): Promise<void> => {
+  await SecureStore.setItemAsync(LOCATION_CONSENT_KEY, consent ? 'true' : 'false');
+};
+
+export const getLocationConsent = async (): Promise<boolean> => {
+  const consent = await SecureStore.getItemAsync(LOCATION_CONSENT_KEY);
+  return consent === 'true';
+};

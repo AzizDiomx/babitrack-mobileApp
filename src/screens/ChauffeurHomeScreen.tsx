@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   StyleSheet,
   Text,
@@ -10,12 +10,18 @@ import {
   SafeAreaView,
   Alert,
   Platform,
+  Modal,
+  TextInput,
+  ScrollView,
+  Linking,
+  StatusBar,
+  useColorScheme,
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Location from 'expo-location';
 import { io as SocketIOClient } from 'socket.io-client';
 import api, { API_URL } from '../services/api';
-import { getAccessToken } from '../services/security';
+import { getAccessToken, saveUser, getLocationConsent, saveLocationConsent } from '../services/security';
 import { Ionicons } from '@expo/vector-icons';
 
 interface ChauffeurHomeScreenProps {
@@ -27,7 +33,107 @@ type ChauffeurTab = 'trip' | 'scan' | 'passengers' | 'incident';
 
 export default function ChauffeurHomeScreen({ user, onLogout }: ChauffeurHomeScreenProps) {
   const [activeTab, setActiveTab] = useState<ChauffeurTab>('trip');
+
+  const colorScheme = useColorScheme();
+  const isDark = colorScheme === 'dark';
+
+  const theme = {
+    background: isDark ? '#000000' : '#F4F4F5',
+    card: isDark ? '#121212' : '#FFFFFF',
+    cardSecondary: isDark ? '#1E1E1F' : '#E4E4E7',
+    text: isDark ? '#FFFFFF' : '#09090B',
+    textSecondary: isDark ? '#A1A1AA' : '#71717A',
+    border: isDark ? '#27272A' : '#E4E4E7',
+    inputBg: isDark ? '#121212' : '#FFFFFF',
+    tabBarBg: isDark ? '#121212' : '#FFFFFF',
+  };
+
+  const styles = useMemo(() => getStyles(isDark), [isDark]);
   
+  // Profil States
+  const [currentUser, setCurrentUser] = useState<any>(user);
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+  const [editPrenom, setEditPrenom] = useState(user.prenom || '');
+  const [editNom, setEditNom] = useState(user.nom || '');
+  const [editTelephone, setEditTelephone] = useState(user.telephone || '');
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+
+  const handleSaveProfile = async () => {
+    if (!editPrenom || !editNom || !editTelephone) {
+      Alert.alert("Erreur", "Veuillez remplir tous les champs.");
+      return;
+    }
+    setIsSavingProfile(true);
+    try {
+      const res = await api.patch('/api/users/me/profile', {
+        prenom: editPrenom,
+        nom: editNom,
+        telephone: editTelephone
+      });
+      
+      const updatedUser = res.data;
+      setCurrentUser(updatedUser);
+      await saveUser(updatedUser);
+      Alert.alert("Profil mis à jour", "Vos modifications ont été enregistrées avec succès.");
+    } catch (err: any) {
+      console.error(err);
+      const errMsg = err.response?.data?.error || "Impossible de sauvegarder les modifications.";
+      Alert.alert("Erreur", errMsg);
+    } finally {
+      setIsSavingProfile(false);
+    }
+  };
+
+  const handleOpenPrivacy = () => {
+    Linking.openURL('https://babitrack-frontoffice-two.vercel.app/privacy').catch(() => {
+      Alert.alert("Erreur", "Impossible d'ouvrir la page de confidentialité.");
+    });
+  };
+
+  const handleShowHelp = () => {
+    Alert.alert(
+      "Centre d'aide & Support",
+      "Besoin d'assistance avec l'application BabiTrack ?\n\nContactez notre support technique :\n📧 Email : support@babitrack.com\n📞 Téléphone : +225 07 00 00 00 00",
+      [{ text: "Fermer" }]
+    );
+  };
+
+  const handleDeleteAccountInModal = () => {
+    setIsProfileModalOpen(false);
+    handleDeleteAccount();
+  };
+
+  const handleDeleteAccount = () => {
+    Alert.alert(
+      "Supprimer le compte ?",
+      "Cette action est définitive. Toutes vos données d'abonnements, de conduite et d'identité seront définitivement supprimées.",
+      [
+        {
+          text: "Annuler",
+          style: "cancel"
+        },
+        {
+          text: "Supprimer mon compte",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await api.delete('/api/users/me/delete');
+              Alert.alert("Compte supprimé", "Votre compte a été supprimé avec succès.");
+              onLogout();
+            } catch (err: any) {
+              console.error(err);
+              let msg = "Impossible de supprimer votre compte. Veuillez réessayer.";
+              if (err.response?.status === 404) {
+                msg = "Erreur (404) : Cette fonctionnalité nécessite le déploiement de la mise à jour sur le serveur Render. Si vous testez localement, connectez l'application à votre IP de dev.";
+              }
+              Alert.alert("Erreur de suppression", msg);
+            }
+          }
+        }
+      ]
+    );
+  };
+
   // Trip Selection States
   const [vehicles, setVehicles] = useState<any[]>([]);
   const [routes, setRoutes] = useState<any[]>([]);
@@ -101,7 +207,14 @@ export default function ChauffeurHomeScreen({ user, onLogout }: ChauffeurHomeScr
   // 2. Émission GPS en tâche de fond lors d'un trajet actif
   const startGpsTracking = async (socket: any) => {
     try {
-      const userConsented = await showLocationDisclosure();
+      let userConsented = await getLocationConsent();
+      if (!userConsented) {
+        userConsented = await showLocationDisclosure();
+        if (userConsented) {
+          await saveLocationConsent(true);
+        }
+      }
+      
       if (!userConsented) {
         Alert.alert('Action requise', 'Vous devez accepter l\'utilisation de la géolocalisation pour pouvoir démarrer le trajet.');
         return false;
@@ -195,7 +308,7 @@ export default function ChauffeurHomeScreen({ user, onLogout }: ChauffeurHomeScr
   };
 
   // 4. Arrêter le trajet
-  const handleStopTrip = async () => {
+  const handleStopTrip = async (showAlert = true) => {
     // Désactiver le GPS
     if (locationSubRef.current) {
       locationSubRef.current.remove();
@@ -216,7 +329,9 @@ export default function ChauffeurHomeScreen({ user, onLogout }: ChauffeurHomeScr
     }
 
     setTripActive(false);
-    Alert.alert('Trajet Terminé', 'Le trajet a été clôturé avec succès.');
+    if (showAlert) {
+      Alert.alert('Trajet Terminé', 'Le trajet a été clôturé avec succès.');
+    }
   };
 
   // 5. Gérer le scan de code QR
@@ -398,7 +513,7 @@ export default function ChauffeurHomeScreen({ user, onLogout }: ChauffeurHomeScr
                   </Text>
                 </View>
               </View>
-              <TouchableOpacity style={styles.stopButton} onPress={handleStopTrip}>
+              <TouchableOpacity style={styles.stopButton} onPress={() => handleStopTrip()}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
                   <Ionicons name="stop-outline" size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
                   <Text style={styles.buttonText}>Terminer le trajet</Text>
@@ -593,13 +708,12 @@ export default function ChauffeurHomeScreen({ user, onLogout }: ChauffeurHomeScr
         <View style={styles.topBar}>
           <View>
             <Text style={styles.welcomeText}>Chauffeur,</Text>
-            <Text style={styles.userName}>{user.prenom} {user.nom}</Text>
+            <Text style={styles.userName}>{currentUser.prenom} {currentUser.nom}</Text>
           </View>
-          <TouchableOpacity style={styles.logoutBtn} onPress={onLogout}>
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <Ionicons name="log-out-outline" size={16} color="#94A3B8" style={{ marginRight: 6 }} />
-              <Text style={styles.logoutBtnText}>Déconnexion</Text>
-            </View>
+          <TouchableOpacity style={styles.profileAvatarBtn} onPress={() => setIsProfileModalOpen(true)}>
+            <Text style={styles.profileAvatarBtnText}>
+              {((currentUser.prenom?.[0] || '') + (currentUser.nom?.[0] || '')).toUpperCase()}
+            </Text>
           </TouchableOpacity>
         </View>
 
@@ -666,17 +780,149 @@ export default function ChauffeurHomeScreen({ user, onLogout }: ChauffeurHomeScr
           <Text style={[styles.tabLabel, activeTab === 'incident' && styles.tabLabelActive]}>Incident</Text>
         </TouchableOpacity>
       </View>
+
+      {/* Profile & Settings Modal */}
+      <Modal
+        visible={isProfileModalOpen}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setIsProfileModalOpen(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <SafeAreaView style={styles.modalContainer}>
+            {/* Modal Header */}
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Mon Compte</Text>
+              <TouchableOpacity style={styles.closeModalBtn} onPress={() => setIsProfileModalOpen(false)}>
+                <Ionicons name="close" size={24} color="#FFFFFF" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView contentContainerStyle={styles.modalScroll}>
+              {/* User Identity Display */}
+              <View style={styles.profileHeaderCard}>
+                <View style={styles.profileAvatarLarge}>
+                  <Text style={styles.profileAvatarLargeText}>
+                    {((currentUser.prenom?.[0] || '') + (currentUser.nom?.[0] || '')).toUpperCase()}
+                  </Text>
+                </View>
+                <Text style={styles.profileNameText}>{currentUser.prenom} {currentUser.nom}</Text>
+                <Text style={styles.profileSubText}>{currentUser.telephone}</Text>
+                <View style={styles.roleBadge}>
+                  <Text style={styles.roleBadgeText}>
+                    {currentUser.role === 'USAGER' ? 'Usager / Passager' : 'Chauffeur'}
+                  </Text>
+                </View>
+              </View>
+
+              {/* SECTION 1: MODIFIER PROFIL */}
+              <View style={styles.settingsSection}>
+                <Text style={styles.sectionHeading}>Modifier mon profil</Text>
+                
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>Prénom</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    value={editPrenom}
+                    onChangeText={setEditPrenom}
+                    placeholder="Votre prénom"
+                    placeholderTextColor="#52525B"
+                  />
+                </View>
+
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>Nom</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    value={editNom}
+                    onChangeText={setEditNom}
+                    placeholder="Votre nom"
+                    placeholderTextColor="#52525B"
+                  />
+                </View>
+
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>Téléphone</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    value={editTelephone}
+                    onChangeText={setEditTelephone}
+                    keyboardType="phone-pad"
+                    placeholder="Votre numéro de téléphone"
+                    placeholderTextColor="#52525B"
+                  />
+                </View>
+
+                <TouchableOpacity 
+                  style={[styles.saveBtn, isSavingProfile && styles.saveBtnDisabled]}
+                  onPress={handleSaveProfile}
+                  disabled={isSavingProfile}
+                >
+                  {isSavingProfile ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.saveBtnText}>Sauvegarder les modifications</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+
+              {/* SECTION 2: AUTRES OPTIONS */}
+              <View style={styles.settingsSection}>
+                <Text style={styles.sectionHeading}>Informations & Support</Text>
+                
+                <TouchableOpacity style={styles.menuRow} onPress={handleOpenPrivacy}>
+                  <View style={styles.menuRowLeft}>
+                    <Ionicons name="document-text-outline" size={20} color="#F97316" style={{ marginRight: 12 }} />
+                    <Text style={styles.menuRowText}>Mentions Légales & Confidentialité</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={16} color="#71717A" />
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.menuRow} onPress={handleShowHelp}>
+                  <View style={styles.menuRowLeft}>
+                    <Ionicons name="help-circle-outline" size={20} color="#3B82F6" style={{ marginRight: 12 }} />
+                    <Text style={styles.menuRowText}>Centre d'aide & Support</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={16} color="#71717A" />
+                </TouchableOpacity>
+              </View>
+
+              {/* SECTION 3: ZONE DE DANGER / DECONNEXION */}
+              <View style={styles.settingsSection}>
+                <TouchableOpacity style={styles.logoutActionBtn} onPress={async () => {
+                  setIsProfileModalOpen(false);
+                  if (tripActive) {
+                    await handleStopTrip(false);
+                  }
+                  onLogout();
+                }}>
+                  <Ionicons name="log-out-outline" size={20} color="#A1A1AA" style={{ marginRight: 12 }} />
+                  <Text style={styles.logoutActionText}>Se déconnecter</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.deleteActionBtn} onPress={handleDeleteAccountInModal}>
+                  <Ionicons name="trash-outline" size={20} color="#EF4444" style={{ marginRight: 12 }} />
+                  <Text style={styles.deleteActionText}>Supprimer le compte</Text>
+                </TouchableOpacity>
+              </View>
+
+              <Text style={styles.versionText}>BabiTrack v1.0.0 • Tous droits réservés</Text>
+            </ScrollView>
+          </SafeAreaView>
+        </View>
+      </Modal>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+const getStyles = (isDark: boolean) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000000',
+    backgroundColor: isDark ? '#000000' : '#F4F4F5',
   },
   safeArea: {
     flex: 1,
+    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   topBar: {
     height: 70,
@@ -685,27 +931,37 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 20,
     borderBottomWidth: 1,
-    borderColor: '#27272a',
+    borderColor: isDark ? '#27272a' : '#E4E4E7',
+    backgroundColor: isDark ? '#121212' : '#FFFFFF',
   },
   welcomeText: {
-    color: '#A1A1AA',
+    color: isDark ? '#A1A1AA' : '#71717A',
     fontSize: 14,
   },
   userName: {
-    color: '#FFFFFF',
+    color: isDark ? '#FFFFFF' : '#09090B',
     fontSize: 18,
     fontWeight: '700',
   },
-  logoutBtn: {
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    backgroundColor: '#121212',
+  profileAvatarBtn: {
+    height: 40,
+    width: 40,
+    borderRadius: 20,
+    backgroundColor: '#F97316',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: isDark ? '#27272A' : '#E4E4E7',
+    shadowColor: '#F97316',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 3,
   },
-  logoutBtnText: {
-    color: '#A1A1AA',
-    fontWeight: '600',
-    fontSize: 12,
+  profileAvatarBtnText: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+    fontSize: 13,
   },
   content: {
     flex: 1,
@@ -717,7 +973,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
   },
   loadingText: {
-    color: '#A1A1AA',
+    color: isDark ? '#A1A1AA' : '#71717A',
     marginTop: 12,
     fontSize: 16,
   },
@@ -728,17 +984,17 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 22,
     fontWeight: '800',
-    color: '#FFFFFF',
+    color: isDark ? '#FFFFFF' : '#09090B',
     marginBottom: 16,
   },
   subtitle: {
     fontSize: 14,
-    color: '#A1A1AA',
+    color: isDark ? '#A1A1AA' : '#71717A',
     lineHeight: 22,
     marginBottom: 24,
   },
   card: {
-    backgroundColor: '#121212',
+    backgroundColor: isDark ? '#121212' : '#FFFFFF',
     borderRadius: 20,
     padding: 20,
     shadowColor: '#000',
@@ -746,11 +1002,13 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.2,
     shadowRadius: 8,
     elevation: 5,
+    borderWidth: 1,
+    borderColor: isDark ? '#27272A' : '#E4E4E7',
   },
   label: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#E4E4E7',
+    color: isDark ? '#E4E4E7' : '#27272A',
     marginBottom: 10,
     marginTop: 12,
   },
@@ -758,11 +1016,11 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   selectItem: {
-    backgroundColor: '#000000',
+    backgroundColor: isDark ? '#000000' : '#FFFFFF',
     borderRadius: 12,
     padding: 14,
     borderWidth: 1,
-    borderColor: '#27272a',
+    borderColor: isDark ? '#27272a' : '#E4E4E7',
     marginVertical: 4,
   },
   selectItemActive: {
@@ -773,12 +1031,12 @@ const styles = StyleSheet.create({
     opacity: 0.5,
   },
   selectText: {
-    color: '#A1A1AA',
+    color: isDark ? '#A1A1AA' : '#71717A',
     fontSize: 14,
     fontWeight: '600',
   },
   selectTextActive: {
-    color: '#FFFFFF',
+    color: isDark ? '#FFFFFF' : '#09090B',
   },
   actionContainer: {
     marginTop: 30,
@@ -820,17 +1078,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   activeTripIndicatorText: {
-    color: '#DCFCE7', // Green 100
+    color: '#DCFCE7',
     fontWeight: '700',
     fontSize: 14,
   },
   scannerContainer: {
     flex: 1,
-    backgroundColor: '#000000',
+    backgroundColor: isDark ? '#000000' : '#F4F4F5',
   },
   scannerLocked: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    backgroundColor: isDark ? 'rgba(0, 0, 0, 0.7)' : 'rgba(255, 255, 255, 0.7)',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -874,12 +1132,14 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   statsCard: {
-    backgroundColor: '#121212',
+    backgroundColor: isDark ? '#121212' : '#FFFFFF',
     borderRadius: 20,
     padding: 20,
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginBottom: 20,
+    borderWidth: 1,
+    borderColor: isDark ? '#27272A' : '#E4E4E7',
   },
   statsCardCol: {
     flex: 1,
@@ -888,12 +1148,12 @@ const styles = StyleSheet.create({
   statsCardLabel: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#71717A',
+    color: isDark ? '#71717A' : '#A1A1AA',
   },
   statsCardVal: {
     fontSize: 24,
     fontWeight: '800',
-    color: '#FFFFFF',
+    color: isDark ? '#FFFFFF' : '#09090B',
     marginTop: 6,
   },
   listContainer: {
@@ -905,25 +1165,26 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 14,
     borderBottomWidth: 1,
-    borderColor: '#27272a',
+    borderColor: isDark ? '#27272a' : '#E4E4E7',
   },
   passengerName: {
-    color: '#E4E4E7',
+    color: isDark ? '#E4E4E7' : '#27272A',
     fontSize: 15,
     fontWeight: '600',
   },
   passengerPhone: {
-    color: '#71717A',
+    color: isDark ? '#71717A' : '#A1A1AA',
     fontSize: 14,
   },
   emptyText: {
-    color: '#71717A',
+    color: isDark ? '#71717A' : '#A1A1AA',
     textAlign: 'center',
     fontSize: 15,
     marginTop: 40,
   },
   incidentButtonsContainer: {
     width: '100%',
+    gap: 12,
   },
   incidentBtn: {
     height: 70,
@@ -938,10 +1199,6 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 4,
   },
-  incidentBtnIcon: {
-    fontSize: 28,
-    marginRight: 16,
-  },
   incidentBtnText: {
     color: '#FFFFFF',
     fontSize: 16,
@@ -950,9 +1207,9 @@ const styles = StyleSheet.create({
   tabBar: {
     height: Platform.OS === 'ios' ? 88 : 70,
     flexDirection: 'row',
-    backgroundColor: '#121212',
+    backgroundColor: isDark ? '#121212' : '#FFFFFF',
     borderTopWidth: 1,
-    borderColor: '#27272a',
+    borderColor: isDark ? '#27272a' : '#E4E4E7',
     paddingBottom: Platform.OS === 'ios' ? 20 : 0,
   },
   tabItem: {
@@ -969,11 +1226,197 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   tabLabel: {
-    color: '#71717A',
+    color: isDark ? '#71717A' : '#A1A1AA',
     fontSize: 11,
     fontWeight: '600',
   },
   tabLabelActive: {
-    color: '#F97316', // Orange 500
+    color: '#F97316',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: isDark ? 'rgba(0, 0, 0, 0.85)' : 'rgba(0, 0, 0, 0.5)',
+  },
+  modalContainer: {
+    flex: 1,
+    backgroundColor: isDark ? '#121212' : '#FFFFFF',
+    marginTop: Platform.OS === 'ios' ? 50 : 20,
+    borderTopLeftRadius: 30,
+    borderTopRightRadius: 30,
+    borderWidth: 1,
+    borderColor: isDark ? '#27272A' : '#E4E4E7',
+    overflow: 'hidden',
+  },
+  modalHeader: {
+    height: 60,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    borderBottomWidth: 1,
+    borderColor: isDark ? '#27272A' : '#E4E4E7',
+  },
+  modalTitle: {
+    color: isDark ? '#FFFFFF' : '#09090B',
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  closeModalBtn: {
+    padding: 4,
+  },
+  modalScroll: {
+    padding: 24,
+    paddingBottom: 60,
+  },
+  profileHeaderCard: {
+    alignItems: 'center',
+    marginBottom: 28,
+  },
+  profileAvatarLarge: {
+    height: 80,
+    width: 80,
+    borderRadius: 40,
+    backgroundColor: '#F97316',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+    borderWidth: 3,
+    borderColor: isDark ? '#27272A' : '#E4E4E7',
+  },
+  profileAvatarLargeText: {
+    color: '#FFFFFF',
+    fontSize: 28,
+    fontWeight: '900',
+  },
+  profileNameText: {
+    color: isDark ? '#FFFFFF' : '#09090B',
+    fontSize: 20,
+    fontWeight: '800',
+    marginBottom: 4,
+  },
+  profileSubText: {
+    color: isDark ? '#A1A1AA' : '#71717A',
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 10,
+  },
+  roleBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 99,
+    backgroundColor: 'rgba(249, 115, 22, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(249, 115, 22, 0.3)',
+  },
+  roleBadgeText: {
+    color: '#F97316',
+    fontSize: 11,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+  },
+  settingsSection: {
+    backgroundColor: isDark ? '#1E1E1F' : '#FFFFFF',
+    borderRadius: 20,
+    padding: 18,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: isDark ? '#27272A' : '#E4E4E7',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 1,
+  },
+  sectionHeading: {
+    color: '#F97316',
+    fontSize: 12,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    marginBottom: 16,
+  },
+  inputGroup: {
+    marginBottom: 14,
+  },
+  inputLabel: {
+    color: isDark ? '#71717A' : '#A1A1AA',
+    fontSize: 11,
+    fontWeight: '700',
+    marginBottom: 6,
+    textTransform: 'uppercase',
+  },
+  textInput: {
+    height: 48,
+    backgroundColor: isDark ? '#121212' : '#F4F4F5',
+    borderWidth: 1,
+    borderColor: isDark ? '#27272A' : '#E4E4E7',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    color: isDark ? '#FFFFFF' : '#09090B',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  saveBtn: {
+    height: 48,
+    backgroundColor: '#F97316',
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 10,
+  },
+  saveBtnDisabled: {
+    backgroundColor: '#7C2D12',
+  },
+  saveBtnText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  menuRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: isDark ? '#27272A' : '#E4E4E7',
+  },
+  menuRowLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  menuRowText: {
+    color: isDark ? '#E4E4E7' : '#09090B',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  logoutActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: isDark ? '#27272A' : '#E4E4E7',
+  },
+  logoutActionText: {
+    color: isDark ? '#A1A1AA' : '#71717A',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  deleteActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    marginTop: 4,
+  },
+  deleteActionText: {
+    color: '#EF4444',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  versionText: {
+    textAlign: 'center',
+    color: '#52525B',
+    fontSize: 10,
+    fontWeight: '600',
+    marginTop: 10,
   },
 });
