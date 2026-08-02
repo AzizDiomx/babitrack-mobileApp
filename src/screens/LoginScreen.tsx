@@ -16,6 +16,8 @@ import api from '../services/api';
 import { saveTokens, saveUser, hasPin } from '../services/security';
 import { Ionicons } from '@expo/vector-icons';
 
+import { useAppTheme } from '../services/theme';
+
 interface LoginScreenProps {
   onLoginSuccess: (user: any, needsPinSetup: boolean) => void;
 }
@@ -26,6 +28,8 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const { colors } = useAppTheme();
 
   const handleLogin = async () => {
     if (!telephone || !password) {
@@ -66,7 +70,7 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={styles.container}
+      style={[styles.container, { backgroundColor: colors.background }]}
     >
       <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
         <View style={styles.inner}>
@@ -75,19 +79,19 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
             <View style={styles.logoBackground}>
               <Ionicons name="bus" size={42} color="#FFFFFF" />
             </View>
-            <Text style={styles.title}>BABITRACK</Text>
-            <Text style={styles.subtitle}>Tracking de Transport Scolaire</Text>
+            <Text style={[styles.title, { color: colors.text }]}>BABITRACK</Text>
+            <Text style={[styles.subtitle, { color: colors.textMuted }]}>Tracking de Transport Scolaire</Text>
           </View>
 
           {/* Form */}
-          <View style={styles.formContainer}>
-            <Text style={styles.label}>Numéro de Téléphone</Text>
-            <View style={styles.inputContainer}>
-              <Ionicons name="call-outline" size={20} color="#94A3B8" style={styles.inputIcon} />
+          <View style={[styles.formContainer, { backgroundColor: colors.card, borderColor: colors.cardBorder }]}>
+            <Text style={[styles.label, { color: colors.textSecondary }]}>Numéro de Téléphone</Text>
+            <View style={[styles.inputContainer, { backgroundColor: colors.inputBg, borderColor: colors.inputBorder }]}>
+              <Ionicons name="call-outline" size={20} color={colors.textMuted} style={styles.inputIcon} />
               <TextInput
-                style={styles.input}
+                style={[styles.input, { color: colors.text }]}
                 placeholder="Ex: 0700000001"
-                placeholderTextColor="#64748B"
+                placeholderTextColor={colors.textMuted}
                 value={telephone}
                 onChangeText={setTelephone}
                 keyboardType="phone-pad"
@@ -95,13 +99,13 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
               />
             </View>
 
-            <Text style={styles.label}>Mot de passe</Text>
-            <View style={styles.inputContainer}>
-              <Ionicons name="lock-closed-outline" size={20} color="#94A3B8" style={styles.inputIcon} />
+            <Text style={[styles.label, { color: colors.textSecondary }]}>Mot de passe</Text>
+            <View style={[styles.inputContainer, { backgroundColor: colors.inputBg, borderColor: colors.inputBorder }]}>
+              <Ionicons name="lock-closed-outline" size={20} color={colors.textMuted} style={styles.inputIcon} />
               <TextInput
-                style={styles.input}
+                style={[styles.input, { color: colors.text }]}
                 placeholder="Votre mot de passe"
-                placeholderTextColor="#64748B"
+                placeholderTextColor={colors.textMuted}
                 value={password}
                 onChangeText={setPassword}
                 secureTextEntry={!showPassword}
@@ -112,7 +116,7 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
                 onPress={() => setShowPassword(!showPassword)}
                 activeOpacity={0.7}
               >
-                <Ionicons name={showPassword ? "eye-off-outline" : "eye-outline"} size={20} color="#94A3B8" />
+                <Ionicons name={showPassword ? "eye-off-outline" : "eye-outline"} size={20} color={colors.textMuted} />
               </TouchableOpacity>
             </View>
 

@@ -144,6 +144,9 @@ export default function ChauffeurHomeScreen({ user, onLogout }: ChauffeurHomeScr
   // Active Trip States
   const [tripActive, setTripActive] = useState(false);
   const [loadingStart, setLoadingStart] = useState(false);
+  const [restoringTrip, setRestoringTrip] = useState(false); // restauration silencieuse au redémarrage
+  const [isAtTerminus, setIsAtTerminus] = useState(false);
+  const [terminusStopName, setTerminusStopName] = useState('');
   
   // Scanner States
   const [hasPermission, requestPermission] = useCameraPermissions();
@@ -158,6 +161,7 @@ export default function ChauffeurHomeScreen({ user, onLogout }: ChauffeurHomeScr
   // References
   const socketRef = useRef<any>(null);
   const locationSubRef = useRef<Location.LocationSubscription | null>(null);
+  const isScanningRef = useRef(false);
 
   // 1. Charger véhicules et trajets
   useEffect(() => {
@@ -169,11 +173,21 @@ export default function ChauffeurHomeScreen({ user, onLogout }: ChauffeurHomeScr
         ]);
         setVehicles(resVehicles.data);
         setRoutes(resRoutes.data);
-        
-        if (resVehicles.data.length > 0) setSelectedVehicle(resVehicles.data[0]);
-        if (resRoutes.data.length > 0) setSelectedRoute(resRoutes.data[0]);
-        
+
+        const firstVehicle = resVehicles.data.length > 0 ? resVehicles.data[0] : null;
+        const firstRoute   = resRoutes.data.length   > 0 ? resRoutes.data[0]   : null;
+
+        if (firstVehicle) setSelectedVehicle(firstVehicle);
+        if (firstRoute)   setSelectedRoute(firstRoute);
+
         setLoadingConfig(false);
+
+        // ✨ RESTAURATION DU TRAJET : si le véhicule était déjà EN_SERVICE
+        // (chauffeur a quitté l'app sans terminer le trajet)
+        if (firstVehicle && firstVehicle.statut === 'EN_SERVICE') {
+          console.log('[Trajet] Véhicule EN_SERVICE détecté au démarrage. Restauration du trajet...');
+          await resumeTrip(firstVehicle, firstRoute);
+        }
       } catch (err) {
         console.error('Erreur de chargement configuration:', err);
         setLoadingConfig(false);
@@ -181,6 +195,52 @@ export default function ChauffeurHomeScreen({ user, onLogout }: ChauffeurHomeScr
     };
     fetchConfig();
   }, []);
+
+  // ✨ Reprendre un trajet interrompu (reconnexion socket + GPS silencieuse)
+  const resumeTrip = async (vehicle: any, route: any) => {
+    setRestoringTrip(true);
+    try {
+      const token = await getAccessToken();
+
+      const socket = SocketIOClient(API_URL, {
+        auth: { token },
+        transports: ['websocket'],
+      });
+
+      socketRef.current = socket;
+
+      socket.on('connect', async () => {
+        console.log('[Socket Chauffeur] Reconnexion pour trajet restauré');
+
+        // Réintégrer le salon du trajet
+        socket.emit('driver:join_trip', {
+          vehicleId: vehicle.id,
+          routeId: route?.id,
+          tripType: route?.type,
+        });
+
+        // Relancer le GPS sans demander le consentement à nouveau (déjà accordé)
+        const gpsStarted = await startGpsTracking(socket, vehicle.id);
+        if (gpsStarted) {
+          setTripActive(true);
+          console.log('[Trajet] Trajet restauré avec succès.');
+        } else {
+          // GPS indisponible : on laisse le chauffeur redémarrer manuellement
+          console.warn('[Trajet] Impossible de relancer le GPS. Le chauffeur devra redémarrer manuellement.');
+          socket.disconnect();
+        }
+        setRestoringTrip(false);
+      });
+
+      socket.on('connect_error', (err: any) => {
+        console.error('[Socket Chauffeur] Erreur restauration:', err);
+        setRestoringTrip(false);
+      });
+    } catch (err) {
+      console.error('[Trajet] Erreur restauration:', err);
+      setRestoringTrip(false);
+    }
+  };
 
   // Avis de consentement explicite de géolocalisation (Exigence Prominent Disclosure de Google Play)
   const showLocationDisclosure = (): Promise<boolean> => {
@@ -205,7 +265,7 @@ export default function ChauffeurHomeScreen({ user, onLogout }: ChauffeurHomeScr
   };
 
   // 2. Émission GPS en tâche de fond lors d'un trajet actif
-  const startGpsTracking = async (socket: any) => {
+  const startGpsTracking = async (socket: any, vehicleId: string) => {
     try {
       let userConsented = await getLocationConsent();
       if (!userConsented) {
@@ -238,7 +298,7 @@ export default function ChauffeurHomeScreen({ user, onLogout }: ChauffeurHomeScr
             lat: location.coords.latitude,
             lng: location.coords.longitude,
             speed: location.coords.speed || 0, // vitesse en m/s
-            vehicleId: selectedVehicle.id,
+            vehicleId, // ← paramètre explicit, pas de dépendance au state React
             timestamp: new Date(location.timestamp).toISOString(),
           };
           console.log('[GPS] Émission de position:', payload);
@@ -285,8 +345,26 @@ export default function ChauffeurHomeScreen({ user, onLogout }: ChauffeurHomeScr
           tripType: selectedRoute.type,
         });
 
+        // Événement : Alerte Terminus Atteint
+        socket.on('driver:at_terminus', (data: any) => {
+          console.log('[Socket Chauffeur] Terminus atteint:', data);
+          setIsAtTerminus(true);
+          if (data.stopName) setTerminusStopName(data.stopName);
+        });
+
+        // Événement : Clôture automatique par le backend
+        socket.on('trip:auto_ended', (data: any) => {
+          console.log('[Socket Chauffeur] Trajet clôturé automatiquement:', data);
+          Alert.alert(
+            'Trajet Terminé',
+            data.message || 'Le trajet a été clôturé automatiquement par le système.'
+          );
+          setIsAtTerminus(false);
+          handleStopTrip(false);
+        });
+
         // Lancer la géolocalisation
-        const gpsStarted = await startGpsTracking(socket);
+        const gpsStarted = await startGpsTracking(socket, selectedVehicle.id);
         if (gpsStarted) {
           setTripActive(true);
         } else {
@@ -309,6 +387,8 @@ export default function ChauffeurHomeScreen({ user, onLogout }: ChauffeurHomeScr
 
   // 4. Arrêter le trajet
   const handleStopTrip = async (showAlert = true) => {
+    const vehicleId = selectedVehicle?.id;
+    
     // Désactiver le GPS
     if (locationSubRef.current) {
       locationSubRef.current.remove();
@@ -316,10 +396,12 @@ export default function ChauffeurHomeScreen({ user, onLogout }: ChauffeurHomeScr
     }
 
     // Informer le backend du changement de statut
-    try {
-      await api.patch(`/api/vehicles/${selectedVehicle.id}/status`, { statut: 'HORS_SERVICE' });
-    } catch (err) {
-      console.error(err);
+    if (vehicleId) {
+      try {
+        await api.patch(`/api/vehicles/${vehicleId}/status`, { statut: 'HORS_SERVICE' });
+      } catch (err) {
+        console.error(err);
+      }
     }
 
     // Déconnecter le socket
@@ -336,8 +418,9 @@ export default function ChauffeurHomeScreen({ user, onLogout }: ChauffeurHomeScr
 
   // 5. Gérer le scan de code QR
   const handleBarcodeScanned = async (event: { data: string }) => {
-    if (!scanningActive || !selectedVehicle) return;
+    if (isScanningRef.current || !scanningActive || !selectedVehicle) return;
     
+    isScanningRef.current = true;
     setScanningActive(false); // Bloquer le scan temporairement
     Vibration.vibrate(100);
 
@@ -386,6 +469,7 @@ export default function ChauffeurHomeScreen({ user, onLogout }: ChauffeurHomeScr
 
     // Relancer le scanner après 3 secondes
     setTimeout(() => {
+      isScanningRef.current = false;
       setScannedResult(null);
       setScanningActive(true);
     }, 3000);
@@ -488,7 +572,13 @@ export default function ChauffeurHomeScreen({ user, onLogout }: ChauffeurHomeScr
         </View>
 
         <View style={styles.actionContainer}>
-          {!tripActive ? (
+          {restoringTrip ? (
+            /* Restauration silencieuse en cours */
+            <View style={[styles.startButton, styles.buttonDisabled]}>
+              <ActivityIndicator color="#fff" style={{ marginRight: 8 }} />
+              <Text style={styles.buttonText}>Reprise du trajet en cours...</Text>
+            </View>
+          ) : !tripActive ? (
             <TouchableOpacity
               style={[styles.startButton, loadingStart && styles.buttonDisabled]}
               onPress={handleStartTrip}
@@ -505,6 +595,46 @@ export default function ChauffeurHomeScreen({ user, onLogout }: ChauffeurHomeScr
             </TouchableOpacity>
           ) : (
             <View>
+              {isAtTerminus && (
+                <View style={{
+                  backgroundColor: '#FEF3C7',
+                  borderColor: '#F59E0B',
+                  borderWidth: 1.5,
+                  borderRadius: 16,
+                  padding: 16,
+                  marginBottom: 14,
+                  alignItems: 'center',
+                }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                    <Ionicons name="flag-outline" size={22} color="#D97706" style={{ marginRight: 8 }} />
+                    <Text style={{ fontSize: 14, fontWeight: '700', color: '#92400E' }}>
+                      Terminus atteint ! ({terminusStopName || 'École'})
+                    </Text>
+                  </View>
+                  <Text style={{ fontSize: 11, color: '#B45309', textAlign: 'center', marginBottom: 10 }}>
+                    Vous êtes arrivé à la fin du trajet. Cliquez ci-dessous pour clôturer le ramassage.
+                  </Text>
+                  <TouchableOpacity
+                    style={{
+                      backgroundColor: '#EA580C',
+                      paddingVertical: 10,
+                      paddingHorizontal: 16,
+                      borderRadius: 12,
+                      width: '100%',
+                      alignItems: 'center',
+                    }}
+                    onPress={() => {
+                      setIsAtTerminus(false);
+                      handleStopTrip(true);
+                    }}
+                  >
+                    <Text style={{ color: '#FFFFFF', fontWeight: '700', fontSize: 13 }}>
+                      🏁 Clôturer le trajet maintenant
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
               <View style={styles.activeTripIndicator}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
                   <Ionicons name="radio-button-on" size={14} color="#22C55E" style={{ marginRight: 8 }} />

@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { getAccessToken, getRefreshToken, saveTokens } from './security';
 
-export const API_URL = 'https://babitrack-backend.onrender.com'; // Adresse IP locale Wi-Fi de la machine dev
+export const API_URL = 'http://192.168.200.210:3000'; // Adresse IP locale Wi-Fi de la machine dev
 
 const api = axios.create({
   baseURL: API_URL,
@@ -24,6 +24,13 @@ api.interceptors.request.use(
     return Promise.reject(error);
   }
 );
+
+// Callback de déconnexion globale si le rafraîchissement échoue
+let logoutCallback: (() => Promise<void> | void) | null = null;
+
+export const setLogoutCallback = (cb: () => Promise<void> | void) => {
+  logoutCallback = cb;
+};
 
 // Intercepteur de réponse : rafraîchissement transparent du token en cas de 401
 api.interceptors.response.use(
@@ -55,10 +62,18 @@ api.interceptors.response.use(
           // Re-tenter la requête d'origine avec le nouveau token
           originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
           return api(originalRequest);
+        } else {
+          console.warn('[API] Aucun refresh token trouvé. Déconnexion forcée...');
+          if (logoutCallback) {
+            await logoutCallback();
+          }
         }
       } catch (refreshError) {
         console.error('[API] Échec du rafraîchissement du token:', refreshError);
-        // Éventuellement forcer le délog si le refresh échoue (ex: token expiré)
+        // Forcer le délog si le refresh échoue (ex: token expiré/invalide)
+        if (logoutCallback) {
+          await logoutCallback();
+        }
       }
     }
     

@@ -9,6 +9,8 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { getPin, isBiometricsSupported, authenticateBiometrics } from '../services/security';
 
+import { useAppTheme } from '../services/theme';
+
 interface PinAuthScreenProps {
   onAuthSuccess: () => void;
   onLogout: () => void;
@@ -18,6 +20,8 @@ export default function PinAuthScreen({ onAuthSuccess, onLogout }: PinAuthScreen
   const [pin, setPin] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [bioSupported, setBioSupported] = useState(false);
+
+  const { colors } = useAppTheme();
 
   // Auto-lancement de la biométrie au montage
   useEffect(() => {
@@ -74,14 +78,14 @@ export default function PinAuthScreen({ onAuthSuccess, onLogout }: PinAuthScreen
   };
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Header */}
       <View style={styles.header}>
-        <View style={styles.logoBackground}>
-          <Ionicons name="lock-closed" size={30} color="#F97316" />
+        <View style={[styles.logoBackground, { backgroundColor: colors.card, borderColor: colors.cardBorder }]}>
+          <Ionicons name="lock-closed" size={30} color={colors.primary} />
         </View>
-        <Text style={styles.title}>Saisir votre code PIN</Text>
-        <Text style={styles.subtitle}>
+        <Text style={[styles.title, { color: colors.text }]}>Saisir votre code PIN</Text>
+        <Text style={[styles.subtitle, { color: colors.textMuted }]}>
           Entrez votre code à 4 chiffres ou utilisez la biométrie pour déverrouiller.
         </Text>
       </View>
@@ -93,7 +97,8 @@ export default function PinAuthScreen({ onAuthSuccess, onLogout }: PinAuthScreen
             key={index}
             style={[
               styles.dot,
-              pin.length > index && styles.dotFilled,
+              { borderColor: colors.cardBorder },
+              pin.length > index && [styles.dotFilled, { backgroundColor: colors.primary, borderColor: colors.primary }],
             ]}
           />
         ))}
@@ -110,40 +115,40 @@ export default function PinAuthScreen({ onAuthSuccess, onLogout }: PinAuthScreen
       <View style={styles.keypad}>
         {/* Row 1 */}
         <View style={styles.row}>
-          <TouchableOpacity style={styles.key} onPress={() => handleKeyPress('1')}>
-            <Text style={styles.keyText}>1</Text>
+          <TouchableOpacity style={[styles.key, { backgroundColor: colors.card, borderColor: colors.cardBorder }]} onPress={() => handleKeyPress('1')}>
+            <Text style={[styles.keyText, { color: colors.text }]}>1</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.key} onPress={() => handleKeyPress('2')}>
-            <Text style={styles.keyText}>2</Text>
+          <TouchableOpacity style={[styles.key, { backgroundColor: colors.card, borderColor: colors.cardBorder }]} onPress={() => handleKeyPress('2')}>
+            <Text style={[styles.keyText, { color: colors.text }]}>2</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.key} onPress={() => handleKeyPress('3')}>
-            <Text style={styles.keyText}>3</Text>
+          <TouchableOpacity style={[styles.key, { backgroundColor: colors.card, borderColor: colors.cardBorder }]} onPress={() => handleKeyPress('3')}>
+            <Text style={[styles.keyText, { color: colors.text }]}>3</Text>
           </TouchableOpacity>
         </View>
 
         {/* Row 2 */}
         <View style={styles.row}>
-          <TouchableOpacity style={styles.key} onPress={() => handleKeyPress('4')}>
-            <Text style={styles.keyText}>4</Text>
+          <TouchableOpacity style={[styles.key, { backgroundColor: colors.card, borderColor: colors.cardBorder }]} onPress={() => handleKeyPress('4')}>
+            <Text style={[styles.keyText, { color: colors.text }]}>4</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.key} onPress={() => handleKeyPress('5')}>
-            <Text style={styles.keyText}>5</Text>
+          <TouchableOpacity style={[styles.key, { backgroundColor: colors.card, borderColor: colors.cardBorder }]} onPress={() => handleKeyPress('5')}>
+            <Text style={[styles.keyText, { color: colors.text }]}>5</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.key} onPress={() => handleKeyPress('6')}>
-            <Text style={styles.keyText}>6</Text>
+          <TouchableOpacity style={[styles.key, { backgroundColor: colors.card, borderColor: colors.cardBorder }]} onPress={() => handleKeyPress('6')}>
+            <Text style={[styles.keyText, { color: colors.text }]}>6</Text>
           </TouchableOpacity>
         </View>
 
         {/* Row 3 */}
         <View style={styles.row}>
-          <TouchableOpacity style={styles.key} onPress={() => handleKeyPress('7')}>
-            <Text style={styles.keyText}>7</Text>
+          <TouchableOpacity style={[styles.key, { backgroundColor: colors.card, borderColor: colors.cardBorder }]} onPress={() => handleKeyPress('7')}>
+            <Text style={[styles.keyText, { color: colors.text }]}>7</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.key} onPress={() => handleKeyPress('8')}>
-            <Text style={styles.keyText}>8</Text>
+          <TouchableOpacity style={[styles.key, { backgroundColor: colors.card, borderColor: colors.cardBorder }]} onPress={() => handleKeyPress('8')}>
+            <Text style={[styles.keyText, { color: colors.text }]}>8</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.key} onPress={() => handleKeyPress('9')}>
-            <Text style={styles.keyText}>9</Text>
+          <TouchableOpacity style={[styles.key, { backgroundColor: colors.card, borderColor: colors.cardBorder }]} onPress={() => handleKeyPress('9')}>
+            <Text style={[styles.keyText, { color: colors.text }]}>9</Text>
           </TouchableOpacity>
         </View>
 
@@ -151,27 +156,27 @@ export default function PinAuthScreen({ onAuthSuccess, onLogout }: PinAuthScreen
         <View style={styles.row}>
           {bioSupported ? (
             <TouchableOpacity style={styles.keyAction} onPress={triggerBiometrics}>
-              <Ionicons name="finger-print" size={28} color="#A1A1AA" />
+              <Ionicons name="finger-print" size={28} color={colors.textMuted} />
             </TouchableOpacity>
           ) : (
             <TouchableOpacity style={styles.keyAction} onPress={handleClear}>
-              <Text style={styles.keyActionText}>C</Text>
+              <Text style={[styles.keyActionText, { color: colors.textMuted }]}>C</Text>
             </TouchableOpacity>
           )}
           
-          <TouchableOpacity style={styles.key} onPress={() => handleKeyPress('0')}>
-            <Text style={styles.keyText}>0</Text>
+          <TouchableOpacity style={[styles.key, { backgroundColor: colors.card, borderColor: colors.cardBorder }]} onPress={() => handleKeyPress('0')}>
+            <Text style={[styles.keyText, { color: colors.text }]}>0</Text>
           </TouchableOpacity>
           
           <TouchableOpacity style={styles.keyAction} onPress={handleBackspace}>
-            <Ionicons name="backspace-outline" size={26} color="#A1A1AA" />
+            <Ionicons name="backspace-outline" size={26} color={colors.textMuted} />
           </TouchableOpacity>
         </View>
       </View>
 
       {/* Alternative login */}
       <TouchableOpacity style={styles.logoutButton} onPress={onLogout}>
-        <Text style={styles.logoutButtonText}>Se connecter avec un autre compte</Text>
+        <Text style={[styles.logoutButtonText, { color: colors.primary }]}>Se connecter avec un autre compte</Text>
       </TouchableOpacity>
     </View>
   );

@@ -9,6 +9,8 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { savePin, isBiometricsSupported, authenticateBiometrics } from '../services/security';
 
+import { useAppTheme } from '../services/theme';
+
 interface PinSetupScreenProps {
   onComplete: () => void;
 }
@@ -18,6 +20,8 @@ export default function PinSetupScreen({ onComplete }: PinSetupScreenProps) {
   const [confirmPin, setConfirmPin] = useState('');
   const [step, setStep] = useState<1 | 2>(1); // Step 1: Enter, Step 2: Confirm
   const [error, setError] = useState<string | null>(null);
+
+  const { colors } = useAppTheme();
 
   const handleKeyPress = (num: string) => {
     setError(null);
@@ -114,13 +118,13 @@ export default function PinSetupScreen({ onComplete }: PinSetupScreenProps) {
   const currentPin = step === 1 ? pin : confirmPin;
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Title */}
       <View style={styles.header}>
-        <Text style={styles.title}>
+        <Text style={[styles.title, { color: colors.text }]}>
           {step === 1 ? 'Créer votre code PIN' : 'Confirmer votre code PIN'}
         </Text>
-        <Text style={styles.subtitle}>
+        <Text style={[styles.subtitle, { color: colors.textMuted }]}>
           {step === 1
             ? 'Définissez un code PIN à 4 chiffres pour vos connexions futures.'
             : 'Veuillez saisir à nouveau le code PIN pour confirmation.'}
@@ -134,7 +138,8 @@ export default function PinSetupScreen({ onComplete }: PinSetupScreenProps) {
             key={index}
             style={[
               styles.dot,
-              currentPin.length > index && styles.dotFilled,
+              { borderColor: colors.cardBorder },
+              currentPin.length > index && [styles.dotFilled, { backgroundColor: colors.primary, borderColor: colors.primary }],
             ]}
           />
         ))}
@@ -151,53 +156,53 @@ export default function PinSetupScreen({ onComplete }: PinSetupScreenProps) {
       <View style={styles.keypad}>
         {/* Row 1 */}
         <View style={styles.row}>
-          <TouchableOpacity style={styles.key} onPress={() => handleKeyPress('1')}>
-            <Text style={styles.keyText}>1</Text>
+          <TouchableOpacity style={[styles.key, { backgroundColor: colors.card, borderColor: colors.cardBorder }]} onPress={() => handleKeyPress('1')}>
+            <Text style={[styles.keyText, { color: colors.text }]}>1</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.key} onPress={() => handleKeyPress('2')}>
-            <Text style={styles.keyText}>2</Text>
+          <TouchableOpacity style={[styles.key, { backgroundColor: colors.card, borderColor: colors.cardBorder }]} onPress={() => handleKeyPress('2')}>
+            <Text style={[styles.keyText, { color: colors.text }]}>2</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.key} onPress={() => handleKeyPress('3')}>
-            <Text style={styles.keyText}>3</Text>
+          <TouchableOpacity style={[styles.key, { backgroundColor: colors.card, borderColor: colors.cardBorder }]} onPress={() => handleKeyPress('3')}>
+            <Text style={[styles.keyText, { color: colors.text }]}>3</Text>
           </TouchableOpacity>
         </View>
 
         {/* Row 2 */}
         <View style={styles.row}>
-          <TouchableOpacity style={styles.key} onPress={() => handleKeyPress('4')}>
-            <Text style={styles.keyText}>4</Text>
+          <TouchableOpacity style={[styles.key, { backgroundColor: colors.card, borderColor: colors.cardBorder }]} onPress={() => handleKeyPress('4')}>
+            <Text style={[styles.keyText, { color: colors.text }]}>4</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.key} onPress={() => handleKeyPress('5')}>
-            <Text style={styles.keyText}>5</Text>
+          <TouchableOpacity style={[styles.key, { backgroundColor: colors.card, borderColor: colors.cardBorder }]} onPress={() => handleKeyPress('5')}>
+            <Text style={[styles.keyText, { color: colors.text }]}>5</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.key} onPress={() => handleKeyPress('6')}>
-            <Text style={styles.keyText}>6</Text>
+          <TouchableOpacity style={[styles.key, { backgroundColor: colors.card, borderColor: colors.cardBorder }]} onPress={() => handleKeyPress('6')}>
+            <Text style={[styles.keyText, { color: colors.text }]}>6</Text>
           </TouchableOpacity>
         </View>
 
         {/* Row 3 */}
         <View style={styles.row}>
-          <TouchableOpacity style={styles.key} onPress={() => handleKeyPress('7')}>
-            <Text style={styles.keyText}>7</Text>
+          <TouchableOpacity style={[styles.key, { backgroundColor: colors.card, borderColor: colors.cardBorder }]} onPress={() => handleKeyPress('7')}>
+            <Text style={[styles.keyText, { color: colors.text }]}>7</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.key} onPress={() => handleKeyPress('8')}>
-            <Text style={styles.keyText}>8</Text>
+          <TouchableOpacity style={[styles.key, { backgroundColor: colors.card, borderColor: colors.cardBorder }]} onPress={() => handleKeyPress('8')}>
+            <Text style={[styles.keyText, { color: colors.text }]}>8</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.key} onPress={() => handleKeyPress('9')}>
-            <Text style={styles.keyText}>9</Text>
+          <TouchableOpacity style={[styles.key, { backgroundColor: colors.card, borderColor: colors.cardBorder }]} onPress={() => handleKeyPress('9')}>
+            <Text style={[styles.keyText, { color: colors.text }]}>9</Text>
           </TouchableOpacity>
         </View>
 
         {/* Row 4 */}
         <View style={styles.row}>
           <TouchableOpacity style={styles.keyAction} onPress={handleClear}>
-            <Text style={styles.keyActionText}>C</Text>
+            <Text style={[styles.keyActionText, { color: colors.textMuted }]}>C</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.key} onPress={() => handleKeyPress('0')}>
-            <Text style={styles.keyText}>0</Text>
+          <TouchableOpacity style={[styles.key, { backgroundColor: colors.card, borderColor: colors.cardBorder }]} onPress={() => handleKeyPress('0')}>
+            <Text style={[styles.keyText, { color: colors.text }]}>0</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.keyAction} onPress={handleBackspace}>
-            <Ionicons name="backspace-outline" size={26} color="#A1A1AA" />
+            <Ionicons name="backspace-outline" size={26} color={colors.textMuted} />
           </TouchableOpacity>
         </View>
       </View>

@@ -17,6 +17,7 @@ import {
   Linking,
   StatusBar,
   useColorScheme,
+  AppState,
 } from 'react-native';
 import MapView, { Marker, Polyline, PROVIDER_DEFAULT } from 'react-native-maps';
 import QRCode from 'react-native-qrcode-svg';
@@ -158,6 +159,45 @@ export default function UsagerHomeScreen({ user, onLogout }: UsagerHomeScreenPro
     fetchRoutes();
   }, []);
 
+  // Fonction utilitaire : récupère la dernière position connue du véhicule via REST
+  const fetchLastVehiclePosition = async (vehicleId: string) => {
+    try {
+      const res = await api.get(`/api/vehicles/${vehicleId}/location`);
+      const data = res.data;
+
+      // Si le véhicule est Hors Service, effacer le marqueur et mettre à jour le statut
+      if (data && data.statut === 'HORS_SERVICE') {
+        console.log('[Position] Le véhicule est Hors Service. Effacement du marqueur.');
+        setBusStatus('HORS_SERVICE');
+        setBusLocation(null);
+        setBusStats({ eta: null, stopProchain: 'En attente...' });
+        return;
+      }
+
+      if (data && data.lat !== undefined && data.lng !== undefined && data.lat !== null) {
+        console.log('[Position] Dernière position récupérée via REST:', data);
+        setBusLocation({
+          latitude: data.lat,
+          longitude: data.lng,
+          bearing: data.bearing || 0,
+          speed: data.speed || 0,
+        });
+        setBusStatus(data.statut || 'EN_SERVICE');
+        if (data.eta !== null || data.stopProchain !== null) {
+          setBusStats({
+            eta: data.eta ?? null,
+            stopProchain: data.stopProchain ?? 'En attente...',
+          });
+        }
+      }
+    } catch (err: any) {
+      // 404 = véhicule pas encore démarré, pas une erreur critique
+      if (err.response?.status !== 404) {
+        console.error('[Position] Erreur récupération position initiale:', err);
+      }
+    }
+  };
+
   // 2. Se connecter en WebSocket pour suivre le véhicule
   useEffect(() => {
     if (!selectedRoute?.vehicleId) return;
@@ -192,6 +232,9 @@ export default function UsagerHomeScreen({ user, onLogout }: UsagerHomeScreenPro
         console.log('[Socket] Connecté au serveur');
         if (isMounted) {
           socket.emit('user:subscribe_vehicle', { vehicleId: selectedRoute.vehicleId });
+          // Récupérer immédiatement la dernière position connue via REST
+          // car le WebSocket ne réémet pas la position si le chauffeur est stationnaire
+          fetchLastVehiclePosition(selectedRoute.vehicleId);
         }
       });
 
@@ -251,6 +294,34 @@ export default function UsagerHomeScreen({ user, onLogout }: UsagerHomeScreenPro
         console.log('[Socket] Déconnecté');
         socketRef.current = null;
       }
+    };
+  }, [selectedRoute]);
+
+  // 2b. Gérer le retour de l'app au premier plan (AppState)
+  // Quand l'usager rouvre l'app, le socket est potentiellement déconnecté
+  // → On reconnecte et on récupère la dernière position via REST
+  useEffect(() => {
+    if (!selectedRoute?.vehicleId) return;
+
+    const handleAppStateChange = async (nextAppState: string) => {
+      if (nextAppState === 'active') {
+        console.log('[AppState] App revenue au premier plan. Reconnexion socket...');
+
+        // Forcer la reconnexion si le socket est déconnecté
+        if (socketRef.current && !socketRef.current.connected) {
+          socketRef.current.connect();
+        }
+
+        // Rafraîchir immédiatement la position via REST pour ne pas attendre
+        // un prochain événement WebSocket (bus potentiellement stationnaire)
+        await fetchLastVehiclePosition(selectedRoute.vehicleId);
+      }
+    };
+
+    const subscription = AppState.addEventListener('change', handleAppStateChange);
+
+    return () => {
+      subscription.remove();
     };
   }, [selectedRoute]);
 
@@ -341,7 +412,8 @@ export default function UsagerHomeScreen({ user, onLogout }: UsagerHomeScreenPro
     }
 
     const routeStops = selectedRoute?.stops || [];
-    const points = routeStops.map((s: any) => ({
+    const sortedStops = [...routeStops].sort((a: any, b: any) => a.ordre - b.ordre);
+    const points = sortedStops.map((s: any) => ({
       latitude: s.latitude,
       longitude: s.longitude,
     }));
@@ -374,20 +446,14 @@ export default function UsagerHomeScreen({ user, onLogout }: UsagerHomeScreenPro
           showsTraffic={true}
           showsBuildings={true}
         >
-          {/* Tracé de la polyligne de l'itinéraire */}
-          {streetPoints.length > 1 ? (
-            <Polyline
-              coordinates={streetPoints}
-              strokeColor="#F97316" // Orange
-              strokeWidth={4}
-            />
-          ) : points.length > 1 ? (
+          {/* Tracé direct et propre de l'itinéraire en ligne séquentielle */}
+          {points.length > 1 && (
             <Polyline
               coordinates={points}
-              strokeColor="#F97316" // Orange
-              strokeWidth={4}
+              strokeColor="#F97316" // Orange marque BabiTrack
+              strokeWidth={5}
             />
-          ) : null}
+          )}
 
           {/* Marqueurs pour chaque arrêt */}
           {routeStops.map((stop: any) => (
@@ -407,7 +473,7 @@ export default function UsagerHomeScreen({ user, onLogout }: UsagerHomeScreenPro
           {busLocation && (
             <Marker
               coordinate={{ latitude: busLocation.latitude, longitude: busLocation.longitude }}
-              title="Mon Car de D'embarquement"
+              title="Mon Car d'Embarquement"
               description={`Vitesse : ${Math.round(busLocation.speed)} km/h`}
               rotation={busLocation.bearing}
               anchor={{ x: 0.5, y: 0.5 }}
@@ -423,7 +489,7 @@ export default function UsagerHomeScreen({ user, onLogout }: UsagerHomeScreenPro
         <View style={styles.infoPanel}>
           <View style={styles.panelRow}>
             <View>
-              <Text style={styles.panelTitle}>Car de D'embarquement</Text>
+              <Text style={styles.panelTitle}>Car d'Embarquement</Text>
               <Text style={styles.panelStatus}>
                 Statut :{' '}
                 <Text
@@ -503,11 +569,11 @@ export default function UsagerHomeScreen({ user, onLogout }: UsagerHomeScreenPro
             />
           </View>
 
-          <View style={[styles.statusBadge, { backgroundColor: getQrColor() }]}>
+          {/* <View style={[styles.statusBadge, { backgroundColor: getQrColor() }]}>
             <Text style={styles.statusBadgeText}>
               {user.statut === 'ACTIF' ? 'ABONNEMENT ACTIF' : user.statut === 'EN_ATTENTE' ? 'EN ATTENTE' : 'INACTIF'}
             </Text>
-          </View>
+          </View> */}
 
           <View style={styles.qrDetails}>
             <Text style={styles.qrDetailName}>
@@ -517,7 +583,7 @@ export default function UsagerHomeScreen({ user, onLogout }: UsagerHomeScreenPro
               <Ionicons name="call-outline" size={14} color="#94A3B8" style={{ marginRight: 4 }} />
               <Text style={styles.qrDetailPhone}>{user.telephone}</Text>
             </View>
-            <Text style={styles.qrDetailText}>Rôle : Usager Scolaire</Text>
+            <Text style={styles.qrDetailText}>Rôle : Usager</Text>
             <Text style={styles.qrDetailText}>
               Compagnie : {user.company?.name || 'SOTRA Scolaire'}
             </Text>
