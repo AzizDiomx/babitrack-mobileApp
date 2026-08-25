@@ -8,7 +8,10 @@
     "userInterfaceStyle": "dark",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.babitrack.app"
+      "bundleIdentifier": "com.babitrack.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Autorisez BabiTrack à utiliser la caméra pour scanner les QR codes de présence des passagers."
+      }
     },
     "android": {
       "package": "com.babitrack.app",
@@ -35,7 +38,13 @@
     },
     "plugins": [
       "expo-secure-store",
-      "expo-font"
+      "expo-font",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Autorisez BabiTrack à utiliser la caméra pour scanner les QR codes d'accès des passagers."
+        }
+      ]
     ],
     "extra": {
       "eas": {

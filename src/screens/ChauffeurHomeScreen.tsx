@@ -152,6 +152,13 @@ export default function ChauffeurHomeScreen({ user, onLogout }: ChauffeurHomeScr
   const [hasPermission, requestPermission] = useCameraPermissions();
   const [scannedResult, setScannedResult] = useState<{ success: boolean; message: string; name: string } | null>(null);
   const [scanningActive, setScanningActive] = useState(true);
+
+  // Demander automatiquement la permission si l'onglet Scan est ouvert
+  useEffect(() => {
+    if (activeTab === 'scan' && (!hasPermission || (!hasPermission.granted && hasPermission.canAskAgain))) {
+      requestPermission();
+    }
+  }, [activeTab, hasPermission]);
   
   // Passenger Counting
   const [boardedCount, setBoardedCount] = useState(0);
@@ -661,7 +668,7 @@ export default function ChauffeurHomeScreen({ user, onLogout }: ChauffeurHomeScr
     if (!tripActive) {
       return (
         <View style={styles.centerContainer}>
-          <Ionicons name="alert-circle-outline" size={32} color="#64748B" style={{ marginBottom: 12 }} />
+          <Ionicons name="alert-circle-outline" size={36} color="#64748B" style={{ marginBottom: 12 }} />
           <Text style={styles.emptyText}>Vous devez démarrer le trajet pour activer le scanner.</Text>
         </View>
       );
@@ -670,18 +677,54 @@ export default function ChauffeurHomeScreen({ user, onLogout }: ChauffeurHomeScr
     if (!hasPermission) {
       return (
         <View style={styles.centerContainer}>
-          <Text style={styles.emptyText}>Demande de permission de la caméra...</Text>
+          <ActivityIndicator size="large" color="#F97316" style={{ marginBottom: 12 }} />
+          <Text style={styles.emptyText}>Vérification des autorisations caméra...</Text>
         </View>
       );
     }
 
     if (!hasPermission.granted) {
+      const canAskAgain = hasPermission.canAskAgain;
       return (
         <View style={styles.centerContainer}>
-          <Text style={styles.emptyText}>Pas d'accès à la caméra.</Text>
-          <TouchableOpacity style={styles.startButton} onPress={requestPermission}>
-            <Text style={styles.buttonText}>Autoriser la caméra</Text>
-          </TouchableOpacity>
+          <Ionicons name="camera-outline" size={56} color="#F97316" style={{ marginBottom: 16 }} />
+          <Text style={[styles.sectionTitle, { textAlign: 'center', marginBottom: 8 }]}>Accès à la Caméra Requis</Text>
+          <Text style={[styles.emptyText, { textAlign: 'center', marginBottom: 24, paddingHorizontal: 20 }]}>
+            Pour valider le pass des élèves et usagers à l'embarquement, autorisez l'accès à la caméra de votre téléphone.
+          </Text>
+          {canAskAgain ? (
+            <TouchableOpacity
+              style={styles.startButton}
+              onPress={async () => {
+                const res = await requestPermission();
+                if (!res.granted && !res.canAskAgain) {
+                  Alert.alert(
+                    "Permission Caméra Bloquée",
+                    "L'accès à la caméra a été désactivé dans vos réglages. Veuillez l'activer pour scanner les passagers.",
+                    [
+                      { text: "Annuler", style: "cancel" },
+                      { text: "Ouvrir les Paramètres", onPress: () => Linking.openSettings() }
+                    ]
+                  );
+                }
+              }}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Ionicons name="camera" size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
+                <Text style={styles.buttonText}>Autoriser la caméra</Text>
+              </View>
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity
+              style={styles.startButton}
+              onPress={() => Linking.openSettings()}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Ionicons name="settings-outline" size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
+                <Text style={styles.buttonText}>Ouvrir les Paramètres du téléphone</Text>
+              </View>
+            </TouchableOpacity>
+          )}
         </View>
       );
     }

@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { getAccessToken, getRefreshToken, saveTokens } from './security';
 
-export const API_URL = 'http://192.168.200.210:3000'; // Adresse IP locale Wi-Fi de la machine dev
+export const API_URL = 'http://192.168.1.67:3000';
 
 const api = axios.create({
   baseURL: API_URL,

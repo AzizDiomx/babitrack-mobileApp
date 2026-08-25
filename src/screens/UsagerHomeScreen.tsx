@@ -25,6 +25,7 @@ import { io as SocketIOClient } from 'socket.io-client';
 import api, { API_URL } from '../services/api';
 import { getAccessToken, saveUser } from '../services/security';
 import { Ionicons } from '@expo/vector-icons';
+import { fetchRealRoadRoute, RealRoadRouteResult } from '../services/roadRoutingService';
 
 const { width, height } = Dimensions.get('window');
 
@@ -133,6 +134,8 @@ export default function UsagerHomeScreen({ user, onLogout }: UsagerHomeScreenPro
   const [busStats, setBusStats] = useState<any>({ eta: null, stopProchain: 'En attente...' });
   const [busStatus, setBusStatus] = useState<string>('HORS_SERVICE');
   const [streetPoints, setStreetPoints] = useState<any[]>([]);
+  const [realRoadRoute, setRealRoadRoute] = useState<RealRoadRouteResult | null>(null);
+  const [selectedStopInfo, setSelectedStopInfo] = useState<any | null>(null);
   const [loadingMap, setLoadingMap] = useState(true);
   const mapRef = useRef<MapView>(null);
   const socketRef = useRef<any>(null);
@@ -325,42 +328,31 @@ export default function UsagerHomeScreen({ user, onLogout }: UsagerHomeScreenPro
     };
   }, [selectedRoute]);
 
-  // 2.5. Effet pour calculer le tracé routier réel (OSRM)
+  // 2.5. Effet pour calculer le tracé routier réel (OSRM) avec waypoints et métriques
   useEffect(() => {
     if (!selectedRoute?.stops || selectedRoute.stops.length < 2) {
+      setRealRoadRoute(null);
       setStreetPoints([]);
       return;
     }
 
-    const fetchStreetRoute = async () => {
-      const sortedStops = [...selectedRoute.stops].sort((a: any, b: any) => a.ordre - b.ordre);
-      const coordsString = sortedStops
-        .map((stop: any) => `${stop.longitude},${stop.latitude}`)
-        .join(';');
+    const loadRoadRoute = async () => {
+      const result = await fetchRealRoadRoute(selectedRoute.stops);
+      setRealRoadRoute(result);
+      setStreetPoints(result.polyline);
 
-      try {
-        const url = `https://router.project-osrm.org/route/v1/driving/${coordsString}?overview=full&geometries=geojson`;
-        const response = await fetch(url);
-        const data = await response.json();
-
-        if (data.code === 'Ok' && data.routes && data.routes.length > 0) {
-          const streetCoords = data.routes[0].geometry.coordinates.map(
-            ([lng, lat]: [number, number]) => ({
-              latitude: lat,
-              longitude: lng,
-            })
-          );
-          setStreetPoints(streetCoords);
-        } else {
-          setStreetPoints(sortedStops.map((s: any) => ({ latitude: s.latitude, longitude: s.longitude })));
-        }
-      } catch (err) {
-        console.error('Erreur OSRM mobile:', err);
-        setStreetPoints(sortedStops.map((s: any) => ({ latitude: s.latitude, longitude: s.longitude })));
+      // Recadrage automatique de la vue carte pour afficher l'intégralité du trajet
+      if (mapRef.current && result.polyline.length > 0) {
+        setTimeout(() => {
+          mapRef.current?.fitToCoordinates(result.polyline, {
+            edgePadding: { top: 110, right: 50, bottom: 220, left: 50 },
+            animated: true,
+          });
+        }, 500);
       }
     };
 
-    fetchStreetRoute();
+    loadRoadRoute();
   }, [selectedRoute]);
 
   // 3. Charger les notifications historiques
@@ -446,28 +438,56 @@ export default function UsagerHomeScreen({ user, onLogout }: UsagerHomeScreenPro
           showsTraffic={true}
           showsBuildings={true}
         >
-          {/* Tracé direct et propre de l'itinéraire en ligne séquentielle */}
-          {points.length > 1 && (
+          {/* Tracé routier réel (Polyline OSRM) qui épouse fidèlement la chaussée */}
+          {streetPoints.length > 1 && (
             <Polyline
-              coordinates={points}
-              strokeColor="#F97316" // Orange marque BabiTrack
+              coordinates={streetPoints}
+              strokeColor="#F97316"
               strokeWidth={5}
+              lineCap="round"
+              lineJoin="round"
             />
           )}
 
-          {/* Marqueurs pour chaque arrêt */}
-          {routeStops.map((stop: any) => (
-            <Marker
-              key={stop.id}
-              coordinate={{ latitude: stop.latitude, longitude: stop.longitude }}
-              title={stop.nom}
-              description={`Ordre de passage : ${stop.ordre}`}
-            >
-              <View style={styles.stopMarker}>
-                <Text style={styles.stopMarkerText}>{stop.ordre}</Text>
-              </View>
-            </Marker>
-          ))}
+          {/* Marqueurs pour chaque arrêt avec numérotation et distinction Départ / Étape / Terminus */}
+          {routeStops.map((stop: any, idx: number) => {
+            const isStart = idx === 0;
+            const isEnd = idx === routeStops.length - 1;
+
+            return (
+              <Marker
+                key={stop.id || `stop-${idx}`}
+                coordinate={{ latitude: stop.latitude, longitude: stop.longitude }}
+                title={`${stop.ordre}. ${stop.nom}`}
+                description={isStart ? 'Départ du trajet' : isEnd ? 'Destination / Terminus' : `Arrêt n°${stop.ordre}`}
+                onPress={() => {
+                  const segment = realRoadRoute?.segments[idx - 1];
+                  setSelectedStopInfo({
+                    stop,
+                    isStart,
+                    isEnd,
+                    segment,
+                  });
+                }}
+              >
+                <View
+                  style={[
+                    styles.stopMarker,
+                    isStart && styles.startMarker,
+                    isEnd && styles.endMarker,
+                  ]}
+                >
+                  {isStart ? (
+                    <Ionicons name="location" size={16} color="#FFFFFF" />
+                  ) : isEnd ? (
+                    <Ionicons name="flag" size={16} color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.stopMarkerText}>{stop.ordre}</Text>
+                  )}
+                </View>
+              </Marker>
+            );
+          })}
 
           {/* Marqueur du Bus en déplacement */}
           {busLocation && (
@@ -484,6 +504,36 @@ export default function UsagerHomeScreen({ user, onLogout }: UsagerHomeScreenPro
             </Marker>
           )}
         </MapView>
+
+        {/* Floating Route Info Summary Banner (Top) */}
+        {realRoadRoute && realRoadRoute.formattedTotalDistance !== '0 km' && (
+          <View style={styles.routeHeaderCard}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.routeHeaderTitle} numberOfLines={1}>
+                  🛣️ {selectedRoute?.nom || 'Trajet en cours'}
+                </Text>
+                <Text style={styles.routeHeaderSubtitle}>
+                  {realRoadRoute.formattedTotalDistance} • {realRoadRoute.formattedTotalDuration} • {realRoadRoute.stops.length} arrêts
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.fitRouteBtn}
+                onPress={() => {
+                  if (mapRef.current && realRoadRoute.polyline.length > 0) {
+                    mapRef.current.fitToCoordinates(realRoadRoute.polyline, {
+                      edgePadding: { top: 110, right: 50, bottom: 220, left: 50 },
+                      animated: true,
+                    });
+                  }
+                }}
+              >
+                <Ionicons name="scan-outline" size={15} color="#F97316" />
+                <Text style={styles.fitRouteBtnText}>Voir tout</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
 
         {/* Sliding Panel d'informations en bas */}
         <View style={styles.infoPanel}>
@@ -721,7 +771,7 @@ export default function UsagerHomeScreen({ user, onLogout }: UsagerHomeScreenPro
         transparent={true}
         onRequestClose={() => setIsProfileModalOpen(false)}
       >
-        <View style={styles.modalOverlay}>
+        <View style={styles.profileModalOverlay}>
           <SafeAreaView style={styles.modalContainer}>
             {/* Modal Header */}
             <View style={styles.modalHeader}>
@@ -841,6 +891,74 @@ export default function UsagerHomeScreen({ user, onLogout }: UsagerHomeScreenPro
           </SafeAreaView>
         </View>
       </Modal>
+
+      {/* Modal Détails d'un arrêt sélectionné */}
+      {selectedStopInfo && (
+        <Modal
+          visible={!!selectedStopInfo}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={() => setSelectedStopInfo(null)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={[styles.modalCard, { backgroundColor: isDark ? '#121212' : '#FFFFFF' }]}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                <View style={[
+                  styles.modalBadge,
+                  selectedStopInfo.isStart ? { backgroundColor: '#22C55E' } : selectedStopInfo.isEnd ? { backgroundColor: '#EF4444' } : { backgroundColor: '#F97316' }
+                ]}>
+                  <Text style={{ color: '#FFFFFF', fontWeight: 'bold', fontSize: 11, letterSpacing: 0.5 }}>
+                    {selectedStopInfo.isStart ? '🏁 DÉPART D\'ITINÉRAIRE' : selectedStopInfo.isEnd ? '🏁 TERMINUS DESTINATION' : `ARRÊT ÉTAPE N°${selectedStopInfo.stop.ordre}`}
+                  </Text>
+                </View>
+                <TouchableOpacity onPress={() => setSelectedStopInfo(null)}>
+                  <Ionicons name="close-circle" size={26} color={isDark ? "#A1A1AA" : "#71717A"} />
+                </TouchableOpacity>
+              </View>
+
+              <Text style={[styles.modalStopTitle, { color: isDark ? '#FFFFFF' : '#09090B' }]}>
+                {selectedStopInfo.stop.nom}
+              </Text>
+              <Text style={{ fontSize: 12, color: isDark ? '#A1A1AA' : '#71717A', marginBottom: 16 }}>
+                Coordonnées : {selectedStopInfo.stop.latitude.toFixed(4)}, {selectedStopInfo.stop.longitude.toFixed(4)}
+              </Text>
+
+              {selectedStopInfo.segment ? (
+                <View style={styles.segmentInfoBox}>
+                  <Text style={styles.segmentInfoTitle}>Tronçon depuis {selectedStopInfo.segment.fromStopName} :</Text>
+                  <View style={{ flexDirection: 'row', gap: 20, marginTop: 8 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <Ionicons name="car-outline" size={18} color="#F97316" style={{ marginRight: 6 }} />
+                      <Text style={{ fontSize: 14, fontWeight: 'bold', color: isDark ? '#FFFFFF' : '#09090B' }}>
+                        {selectedStopInfo.segment.formattedDistance}
+                      </Text>
+                    </View>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <Ionicons name="time-outline" size={18} color="#F97316" style={{ marginRight: 6 }} />
+                      <Text style={{ fontSize: 14, fontWeight: 'bold', color: isDark ? '#FFFFFF' : '#09090B' }}>
+                        {selectedStopInfo.segment.formattedDuration}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+              ) : (
+                <View style={styles.segmentInfoBox}>
+                  <Text style={{ fontSize: 12, color: '#22C55E', fontWeight: 'bold' }}>
+                    Point de départ officiel de la ligne de transport.
+                  </Text>
+                </View>
+              )}
+
+              <TouchableOpacity
+                style={[styles.startButton, { marginTop: 20 }]}
+                onPress={() => setSelectedStopInfo(null)}
+              >
+                <Text style={styles.buttonText}>Fermer</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+      )}
     </View>
   );
 }
@@ -937,6 +1055,101 @@ const getStyles = (isDark: boolean) => StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 10,
     fontWeight: '700',
+  },
+  startMarker: {
+    backgroundColor: '#22C55E',
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderColor: '#FFFFFF',
+    borderWidth: 2,
+  },
+  endMarker: {
+    backgroundColor: '#EF4444',
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderColor: '#FFFFFF',
+    borderWidth: 2,
+  },
+  routeHeaderCard: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 50 : 20,
+    left: 16,
+    right: 16,
+    backgroundColor: isDark ? 'rgba(18, 18, 18, 0.94)' : 'rgba(255, 255, 255, 0.96)',
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: isDark ? '#27272A' : '#E4E4E7',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 6,
+  },
+  routeHeaderTitle: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: isDark ? '#FFFFFF' : '#09090B',
+  },
+  routeHeaderSubtitle: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#F97316',
+    marginTop: 2,
+  },
+  fitRouteBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: isDark ? '#27272A' : '#F4F4F5',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 12,
+    marginLeft: 10,
+  },
+  fitRouteBtnText: {
+    fontSize: 11,
+    fontWeight: 'bold',
+    color: '#F97316',
+    marginLeft: 4,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    justifyContent: 'flex-end',
+  },
+  modalCard: {
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    padding: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 16,
+    elevation: 10,
+  },
+  modalBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  modalStopTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 2,
+  },
+  segmentInfoBox: {
+    backgroundColor: isDark ? '#1E1E1F' : '#F4F4F5',
+    padding: 14,
+    borderRadius: 16,
+    marginTop: 4,
+  },
+  segmentInfoTitle: {
+    fontSize: 11,
+    fontWeight: 'bold',
+    color: isDark ? '#A1A1AA' : '#71717A',
   },
   busMarker: {
     width: 36,
@@ -1186,7 +1399,18 @@ const getStyles = (isDark: boolean) => StyleSheet.create({
   tabLabelActive: {
     color: '#F97316',
   },
-  modalOverlay: {
+  startButton: {
+    backgroundColor: '#F97316',
+    paddingVertical: 14,
+    borderRadius: 16,
+    alignItems: 'center',
+  },
+  buttonText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  profileModalOverlay: {
     flex: 1,
     backgroundColor: isDark ? 'rgba(0, 0, 0, 0.85)' : 'rgba(0, 0, 0, 0.5)',
   },
