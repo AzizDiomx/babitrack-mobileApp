@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { getAccessToken, getRefreshToken, saveTokens } from './security';
 
-export const API_URL = 'http://192.168.1.67:3000';
+export const API_URL = process.env.EXPO_PUBLIC_API_URL || 'https://babitrack-backend.onrender.com';
 
 const api = axios.create({
   baseURL: API_URL,

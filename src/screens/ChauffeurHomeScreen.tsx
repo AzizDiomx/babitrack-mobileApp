@@ -162,7 +162,7 @@ export default function ChauffeurHomeScreen({ user, onLogout }: ChauffeurHomeScr
   
   // Passenger Counting
   const [boardedCount, setBoardedCount] = useState(0);
-  const [totalCount, setTotalCount] = useState(25); // Simulé pour l'MVP
+  const [totalCount, setTotalCount] = useState(0); // Synchronisé sur la capacité réelle du véhicule
   const [boardedPassengers, setBoardedPassengers] = useState<any[]>([]);
 
   // References
@@ -184,7 +184,10 @@ export default function ChauffeurHomeScreen({ user, onLogout }: ChauffeurHomeScr
         const firstVehicle = resVehicles.data.length > 0 ? resVehicles.data[0] : null;
         const firstRoute   = resRoutes.data.length   > 0 ? resRoutes.data[0]   : null;
 
-        if (firstVehicle) setSelectedVehicle(firstVehicle);
+        if (firstVehicle) {
+          setSelectedVehicle(firstVehicle);
+          setTotalCount(firstVehicle.capacite || 0);
+        }
         if (firstRoute)   setSelectedRoute(firstRoute);
 
         setLoadingConfig(false);
@@ -206,6 +209,9 @@ export default function ChauffeurHomeScreen({ user, onLogout }: ChauffeurHomeScr
   // ✨ Reprendre un trajet interrompu (reconnexion socket + GPS silencieuse)
   const resumeTrip = async (vehicle: any, route: any) => {
     setRestoringTrip(true);
+    if (vehicle?.capacite) {
+      setTotalCount(vehicle.capacite);
+    }
     try {
       const token = await getAccessToken();
 
@@ -374,6 +380,10 @@ export default function ChauffeurHomeScreen({ user, onLogout }: ChauffeurHomeScr
         const gpsStarted = await startGpsTracking(socket, selectedVehicle.id);
         if (gpsStarted) {
           setTripActive(true);
+          // Synchroniser le nombre réel de places disponibles du car et réinitialiser les embarquements
+          setTotalCount(selectedVehicle.capacite || 0);
+          setBoardedCount(0);
+          setBoardedPassengers([]);
         } else {
           socket.disconnect();
         }
@@ -431,6 +441,24 @@ export default function ChauffeurHomeScreen({ user, onLogout }: ChauffeurHomeScr
     setScanningActive(false); // Bloquer le scan temporairement
     Vibration.vibrate(100);
 
+    // Vérification de la capacité réelle disponible du véhicule
+    const realCapacity = selectedVehicle.capacite || totalCount;
+    if (realCapacity > 0 && boardedCount >= realCapacity) {
+      Vibration.vibrate([0, 500, 100, 500]);
+      setScannedResult({
+        success: false,
+        message: 'Car complet !',
+        name: `Capacité maximale (${realCapacity} places) atteinte`,
+      });
+
+      setTimeout(() => {
+        isScanningRef.current = false;
+        setScannedResult(null);
+        setScanningActive(true);
+      }, 3000);
+      return;
+    }
+
     try {
       // Envoyer le token QR au serveur pour validation
       const res = await api.post('/api/trips/scan', {
@@ -448,6 +476,9 @@ export default function ChauffeurHomeScreen({ user, onLogout }: ChauffeurHomeScr
           message: 'Accès autorisé',
           name: `${data.user.prenom} ${data.user.nom}`,
         });
+        if (data.capacite) {
+          setTotalCount(data.capacite);
+        }
         setBoardedPassengers((prev) => {
           const exists = prev.some((p) => p.id === data.user.id);
           if (exists) {
@@ -462,7 +493,7 @@ export default function ChauffeurHomeScreen({ user, onLogout }: ChauffeurHomeScr
         setScannedResult({
           success: false,
           message: data.message || 'Accès refusé',
-          name: data.user ? `${data.user.prenom} ${data.user.nom}` : 'Utilisateur Inconnu',
+          name: data.user ? `${data.user.prenom} ${data.user.nom}` : 'Accès impossible',
         });
       }
     } catch (error) {
@@ -531,7 +562,12 @@ export default function ChauffeurHomeScreen({ user, onLogout }: ChauffeurHomeScr
                   selectedVehicle?.id === v.id && styles.selectItemActive,
                   tripActive && styles.selectItemDisabled,
                 ]}
-                onPress={() => !tripActive && setSelectedVehicle(v)}
+                onPress={() => {
+                  if (!tripActive) {
+                    setSelectedVehicle(v);
+                    setTotalCount(v.capacite || 0);
+                  }
+                }}
                 disabled={tripActive}
               >
                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -542,7 +578,7 @@ export default function ChauffeurHomeScreen({ user, onLogout }: ChauffeurHomeScr
                     style={{ marginRight: 8 }}
                   />
                   <Text style={[styles.selectText, selectedVehicle?.id === v.id && styles.selectTextActive]}>
-                    {v.immatriculation} ({v.capacite} places)
+                    {v.immatriculation} ({v.capacite} places réelles)
                   </Text>
                 </View>
               </TouchableOpacity>
@@ -596,7 +632,9 @@ export default function ChauffeurHomeScreen({ user, onLogout }: ChauffeurHomeScr
               ) : (
                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                   <Ionicons name="play-outline" size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
-                  <Text style={styles.buttonText}>Démarrer le trajet</Text>
+                  <Text style={styles.buttonText}>
+                    Démarrer le trajet ({selectedVehicle?.capacite || 0} places disponibles)
+                  </Text>
                 </View>
               )}
             </TouchableOpacity>
@@ -729,6 +767,10 @@ export default function ChauffeurHomeScreen({ user, onLogout }: ChauffeurHomeScr
       );
     }
 
+    const realCapacity = selectedVehicle?.capacite || totalCount || 0;
+    const remainingSeats = Math.max(0, realCapacity - boardedCount);
+    const isFull = realCapacity > 0 && boardedCount >= realCapacity;
+
     return (
       <View style={styles.scannerContainer}>
         {scanningActive ? (
@@ -745,6 +787,47 @@ export default function ChauffeurHomeScreen({ user, onLogout }: ChauffeurHomeScr
             <Text style={styles.loadingText}>Validation en cours...</Text>
           </View>
         )}
+
+        {/* Jauge des places réelles du car en haut du scanner */}
+        <View style={styles.scannerSeatBar}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Ionicons name="bus" size={18} color="#F97316" style={{ marginRight: 8 }} />
+              <Text style={styles.scannerSeatTitle}>
+                {selectedVehicle?.immatriculation || 'Car'}
+              </Text>
+            </View>
+            <View style={[
+              styles.scannerSeatBadge,
+              isFull
+                ? { backgroundColor: '#EF4444' }
+                : remainingSeats <= 5
+                ? { backgroundColor: '#F59E0B' }
+                : { backgroundColor: '#22C55E' }
+            ]}>
+              <Text style={styles.scannerSeatBadgeText}>
+                {isFull ? 'CAR COMPLET' : `${remainingSeats} PLACES RESTANTES`}
+              </Text>
+            </View>
+          </View>
+          <View style={styles.scannerSeatRow}>
+            <Text style={styles.scannerSeatSub}>
+              Passagers à bord : <Text style={{ fontWeight: 'bold', color: '#FFFFFF' }}>{boardedCount}</Text> / <Text style={{ fontWeight: 'bold', color: '#FFFFFF' }}>{realCapacity} places réelles</Text>
+            </Text>
+          </View>
+          {/* Barre de progression visuelle des places */}
+          <View style={styles.seatProgressBarBg}>
+            <View
+              style={[
+                styles.seatProgressBarFill,
+                {
+                  width: `${Math.min(100, realCapacity > 0 ? (boardedCount / realCapacity) * 100 : 0)}%`,
+                  backgroundColor: isFull ? '#EF4444' : remainingSeats <= 5 ? '#F59E0B' : '#22C55E',
+                },
+              ]}
+            />
+          </View>
+        </View>
 
         {/* Cadre de ciblage */}
         <View style={styles.overlayFrame} />
@@ -773,23 +856,27 @@ export default function ChauffeurHomeScreen({ user, onLogout }: ChauffeurHomeScr
 
   // Rendu de l'onglet Passagers
   const renderPassengersTab = () => {
+    const realCapacity = selectedVehicle?.capacite || totalCount || 0;
+    const remainingSeats = Math.max(0, realCapacity - boardedCount);
+    const isFull = realCapacity > 0 && boardedCount >= realCapacity;
+
     return (
       <View style={styles.tabContent}>
         <Text style={styles.sectionTitle}>Contrôle d'Embarquement</Text>
 
         <View style={styles.statsCard}>
           <View style={styles.statsCardCol}>
-            <Text style={styles.statsCardLabel}>INSCRITS</Text>
-            <Text style={styles.statsCardVal}>{totalCount}</Text>
+            <Text style={styles.statsCardLabel}>CAPACITÉ CAR</Text>
+            <Text style={styles.statsCardVal}>{realCapacity}</Text>
           </View>
           <View style={styles.statsCardCol}>
             <Text style={styles.statsCardLabel}>EMBARQUÉS</Text>
             <Text style={[styles.statsCardVal, { color: '#22C55E' }]}>{boardedCount}</Text>
           </View>
           <View style={styles.statsCardCol}>
-            <Text style={styles.statsCardLabel}>ABSENTS</Text>
-            <Text style={[styles.statsCardVal, { color: '#EF4444' }]}>
-              {Math.max(0, totalCount - boardedCount)}
+            <Text style={styles.statsCardLabel}>DISPONIBLES</Text>
+            <Text style={[styles.statsCardVal, { color: isFull ? '#EF4444' : remainingSeats <= 5 ? '#F59E0B' : '#22C55E' }]}>
+              {remainingSeats}
             </Text>
           </View>
         </View>
@@ -1258,6 +1345,57 @@ const getStyles = (isDark: boolean) => StyleSheet.create({
   scannerContainer: {
     flex: 1,
     backgroundColor: isDark ? '#000000' : '#F4F4F5',
+  },
+  scannerSeatBar: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 20 : 16,
+    left: 16,
+    right: 16,
+    backgroundColor: isDark ? 'rgba(18, 18, 18, 0.92)' : 'rgba(255, 255, 255, 0.95)',
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: isDark ? '#27272A' : '#E4E4E7',
+    zIndex: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  scannerSeatTitle: {
+    color: isDark ? '#FFFFFF' : '#09090B',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  scannerSeatBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  scannerSeatBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  scannerSeatRow: {
+    marginTop: 6,
+    marginBottom: 8,
+  },
+  scannerSeatSub: {
+    color: isDark ? '#A1A1AA' : '#71717A',
+    fontSize: 12,
+  },
+  seatProgressBarBg: {
+    height: 6,
+    backgroundColor: isDark ? '#27272A' : '#E4E4E7',
+    borderRadius: 3,
+    overflow: 'hidden',
+  },
+  seatProgressBarFill: {
+    height: '100%',
+    borderRadius: 3,
   },
   scannerLocked: {
     ...StyleSheet.absoluteFillObject,
