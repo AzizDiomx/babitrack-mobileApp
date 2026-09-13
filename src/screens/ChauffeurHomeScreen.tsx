@@ -16,8 +16,10 @@ import {
   Linking,
   StatusBar,
   useColorScheme,
+  AppState,
+  AppStateStatus,
 } from 'react-native';
-import { CameraView, useCameraPermissions } from 'expo-camera';
+import { Camera, CameraView, useCameraPermissions } from 'expo-camera';
 import * as Location from 'expo-location';
 import { io as SocketIOClient } from 'socket.io-client';
 import api, { API_URL } from '../services/api';
@@ -148,17 +150,83 @@ export default function ChauffeurHomeScreen({ user, onLogout }: ChauffeurHomeScr
   const [isAtTerminus, setIsAtTerminus] = useState(false);
   const [terminusStopName, setTerminusStopName] = useState('');
   
-  // Scanner States
-  const [hasPermission, requestPermission] = useCameraPermissions();
+  // Scanner States & Permissions
+  const [cameraPermission, requestCameraPermission] = useCameraPermissions();
+  const [isCameraGranted, setIsCameraGranted] = useState(false);
   const [scannedResult, setScannedResult] = useState<{ success: boolean; message: string; name: string } | null>(null);
   const [scanningActive, setScanningActive] = useState(true);
 
-  // Demander automatiquement la permission si l'onglet Scan est ouvert
-  useEffect(() => {
-    if (activeTab === 'scan' && (!hasPermission || (!hasPermission.granted && hasPermission.canAskAgain))) {
-      requestPermission();
+  // Synchronisation dynamique du statut réel de la permission caméra
+  const syncCameraPermission = async () => {
+    try {
+      const status = await Camera.getCameraPermissionsAsync();
+      if (status.granted) {
+        setIsCameraGranted(true);
+      }
+      return status;
+    } catch (e) {
+      return null;
     }
-  }, [activeTab, hasPermission]);
+  };
+
+  // 1. Écouter le retour au premier plan (AppState 'active')
+  // CRITIQUE : Permet d'activer le scanner instantanément quand l'utilisateur revient des Paramètres du téléphone
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (nextState: AppStateStatus) => {
+      if (nextState === 'active') {
+        syncCameraPermission();
+      }
+    });
+
+    syncCameraPermission();
+
+    return () => {
+      sub.remove();
+    };
+  }, []);
+
+  // 2. Synchroniser dès que le hook de permission change
+  useEffect(() => {
+    if (cameraPermission?.granted) {
+      setIsCameraGranted(true);
+    }
+  }, [cameraPermission]);
+
+  // 3. Demander automatiquement la permission quand l'onglet Scan s'ouvre
+  useEffect(() => {
+    if (activeTab === 'scan') {
+      syncCameraPermission().then((status) => {
+        if (status && !status.granted && status.canAskAgain) {
+          Camera.requestCameraPermissionsAsync().then((res) => {
+            if (res.granted) {
+              setIsCameraGranted(true);
+            }
+          });
+        }
+      });
+    }
+  }, [activeTab]);
+
+  // Handler manuel lors du clic sur "Autoriser la caméra"
+  const handleRequestCamera = async () => {
+    try {
+      const res = await Camera.requestCameraPermissionsAsync();
+      if (res.granted) {
+        setIsCameraGranted(true);
+      } else if (!res.canAskAgain) {
+        Alert.alert(
+          "Permission Caméra Bloquée",
+          "L'accès à la caméra a été désactivé dans vos réglages. Veuillez l'activer pour scanner les passagers.",
+          [
+            { text: "Annuler", style: "cancel" },
+            { text: "Ouvrir les Paramètres", onPress: () => Linking.openSettings() }
+          ]
+        );
+      }
+    } catch (e) {
+      console.error('Erreur demande permission caméra:', e);
+    }
+  };
   
   // Passenger Counting
   const [boardedCount, setBoardedCount] = useState(0);
@@ -712,17 +780,10 @@ export default function ChauffeurHomeScreen({ user, onLogout }: ChauffeurHomeScr
       );
     }
 
-    if (!hasPermission) {
-      return (
-        <View style={styles.centerContainer}>
-          <ActivityIndicator size="large" color="#F97316" style={{ marginBottom: 12 }} />
-          <Text style={styles.emptyText}>Vérification des autorisations caméra...</Text>
-        </View>
-      );
-    }
+    const hasAccess = Boolean(cameraPermission?.granted || isCameraGranted);
 
-    if (!hasPermission.granted) {
-      const canAskAgain = hasPermission.canAskAgain;
+    if (!hasAccess) {
+      const canAskAgain = cameraPermission?.canAskAgain ?? true;
       return (
         <View style={styles.centerContainer}>
           <Ionicons name="camera-outline" size={56} color="#F97316" style={{ marginBottom: 16 }} />
@@ -733,19 +794,7 @@ export default function ChauffeurHomeScreen({ user, onLogout }: ChauffeurHomeScr
           {canAskAgain ? (
             <TouchableOpacity
               style={styles.startButton}
-              onPress={async () => {
-                const res = await requestPermission();
-                if (!res.granted && !res.canAskAgain) {
-                  Alert.alert(
-                    "Permission Caméra Bloquée",
-                    "L'accès à la caméra a été désactivé dans vos réglages. Veuillez l'activer pour scanner les passagers.",
-                    [
-                      { text: "Annuler", style: "cancel" },
-                      { text: "Ouvrir les Paramètres", onPress: () => Linking.openSettings() }
-                    ]
-                  );
-                }
-              }}
+              onPress={handleRequestCamera}
             >
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <Ionicons name="camera" size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
@@ -775,6 +824,7 @@ export default function ChauffeurHomeScreen({ user, onLogout }: ChauffeurHomeScr
       <View style={styles.scannerContainer}>
         {scanningActive ? (
           <CameraView
+            key={`camera-scanner-${hasAccess ? 'granted' : 'denied'}`}
             style={StyleSheet.absoluteFillObject}
             onBarcodeScanned={handleBarcodeScanned}
             barcodeScannerSettings={{
